@@ -1,0 +1,458 @@
+*%
+*% ml1250.gpd - Samsung ML-1250, PCL5e
+*%
+*% A Unidrv v3 minidriver.  There is no compiled code in this driver at all:
+*% Windows' in-box unidrv.dll does the rendering, halftoning, banding and
+*% raster compression, and this file tells it which bytes the ML-1250 wants.
+*%
+*% Why PCL5e and not PCL6, when the printer advertises "Emulation: PCL6":
+*% the ML-1250 has 4 MB of RAM and a year-2000 PCL-XL Protocol Class 2.0
+*% interpreter.  Modern PCL6 drivers emit Class 3.0 streams and assume far
+*% more memory, which is why they produce PCL XL error pages or nothing at
+*% all.  PCL5e raster is the conservative subset this printer was sold with;
+*% its own control panel has a PCL 5e menu and Samsung's Linux instructions
+*% told users to pick "Samsung Printer PCL 5e Compatible".
+*%
+*% No device fonts are declared, so Unidrv renders every glyph into the
+*% raster.  That is slower than downloading text, and deliberate: it means
+*% Cyrillic, and any other script or font, prints exactly as it appears on
+*% screen, with no symbol-set or font-substitution surprises.
+*%
+*% Geometry comes from the PCL 5 Technical Reference logical-page table.
+*% Master units are 600/inch, matching <Esc>&u600D sent in CmdStartDoc, so
+*% every coordinate below is in 1/600 inch.
+*%
+*% Keep every entry, and every brace, on a line of its own.  Unidrv's parser
+*% silently drops an entry that shares a line with a brace, so a compact
+*% "*Command: CmdSelect { *Order: ... *Cmd: ... }" compiles to nothing at
+*% all.  tests/gpdcheck.py enforces this.
+*%
+
+*GPDSpecVersion: "1.0"
+*GPDFileVersion: "1.0.0.0"
+*GPDFileName: "ml1250.gpd"
+*Include: "StdNames.gpd"
+*CodePage: 1252
+*ModelName: "Samsung ML-1250 PCL5e"
+*MasterUnits: PAIR(600, 600)
+*ResourceDLL: "unires.dll"
+*PrinterType: PAGE
+*MaxCopies: 99
+*FontCartSlots: 0
+*PrintRate: 12
+*PrintRateUnit: PPM
+
+*% ------------------------------------------------------------ capabilities
+
+*% The printer cannot rotate anything itself, so Unidrv rotates the raster
+*% for landscape.  That is one less thing the old firmware has to get right.
+*RotateCoordinate?: FALSE
+*RotateRaster?: FALSE
+*RotateFont?: FALSE
+*MemoryUsage: LIST(FONT, RASTER)
+*EjectPageWithFF?: TRUE
+*OutputDataFormat: H_BYTE
+*OptimizeLeftBound?: TRUE
+*RasterSendAllData?: FALSE
+
+*% Blanks inside a scan line are NOT strippable here.  PCL is explicit that
+*% once raster graphics mode is entered only Transfer Raster Data, Set
+*% Compression Method and Raster Y Offset are accepted, and anything else
+*% implicitly ends the image - so there is no way to jump over a gap in the
+*% middle of a line.  Leading and trailing blanks are fine: those move the
+*% left graphics margin before the image starts.
+*StripBlanks: LIST(LEADING, TRAILING)
+
+*% Same rule, stated the way Unidrv needs to hear it: no cursor move of any
+*% kind is legal inside raster mode.  Without this Unidrv would happily emit
+*% an <Esc>*p move between bands and silently terminate the image; with it,
+*% Unidrv ends the raster, moves, and starts a new one, which is valid PCL.
+*BadCursorMoveInGrxMode: LIST(X_PORTRAIT, X_LANDSCAPE, Y_PORTRAIT, Y_LANDSCAPE)
+
+*CursorXAfterSendBlockData: AT_GRXDATA_ORIGIN
+*CursorYAfterSendBlockData: AUTO_INCREMENT
+*XMoveUnit: 600
+*YMoveUnit: 600
+*XMoveThreshold: 0
+*YMoveThreshold: 0
+
+*% ----------------------------------------------------------------- job
+
+*% The job opens with the universal exit language command and @PJL JOB.
+*% @PJL JOB is itself a reset, so every @PJL SET has to come after it - those
+*% are emitted by the feature options below, at JOB_SETUP.5 and later.
+*% @PJL ENTER LANGUAGE waits until DOC_SETUP so the whole PJL block stays
+*% together and is not interrupted by PCL.
+*%
+*% A literal percent sign in a command string MUST be written %%.  In the
+*% compiled GPD a single % introduces a parameter reference (%0001 = the
+*% first parameter), and Unidrv does not escape it for you - not even when
+*% it comes from a hex block.  A bare <25> in the UEL made Unidrv read
+*% "%-123" as parameter number -123 and crash the spooler on the very first
+*% command of every job.  Microsoft's own PJL.GPD writes "<1B>%%-12345X".
+*Command: CmdStartJob
+{
+    *Order: JOB_SETUP.1
+    *Cmd: "<1B>%%-12345X@PJL JOB<0D0A>"
+}
+
+*Command: CmdStartDoc
+{
+    *% Enter PCL, reset, then <Esc>&u600D to make cursor units 1/600 inch,
+    *% which is what MasterUnits above promises.  The margins are set per
+    *% page in CmdStartPage, because the page size command resets them.
+    *Order: DOC_SETUP.1
+    *Cmd: "@PJL ENTER LANGUAGE=PCL<0D0A><1B>E<1B>&u600D<1B>*r0F"
+}
+
+*Command: CmdStartPage
+{
+    *% Portrait (Unidrv rotates landscape itself), top margin zero and
+    *% perforation skip off, so that cursor Y=0 is the top of the logical
+    *% page.  This has to come after the page size and paper source commands
+    *% in DOC_SETUP: PCL resets the top margin to 1/2 inch on a page size or
+    *% orientation change.  Same order as ml1250.exe, which is known to print.
+    *% Raster resolution goes here too, after the <Esc>E in CmdStartDoc.
+    *Order: PAGE_SETUP.1
+    *Cmd: "<1B>&l0O<1B>&l0E<1B>&l0L<1B>*t" %d{GraphicsXRes} "R"
+}
+
+*Command: CmdCopies
+{
+    *Order: DOC_SETUP.5
+    *Cmd: "<1B>&l" %d[1,99]{NumOfCopies} "X"
+}
+
+*Command: CmdEndJob
+{
+    *% <Esc>E first so a printer that ignored the PJL still resets.  Nothing
+    *% may follow the closing UEL.
+    *Order: JOB_FINISH.1
+    *Cmd: "<1B>E<1B>%%-12345X@PJL EOJ<0D0A><1B>%%-12345X"
+}
+
+*% -------------------------------------------------------------- cursor
+
+*Command: CmdCR: "<0D>"
+*Command: CmdLF: "<0A>"
+*Command: CmdFF: "<0C>"
+*Command: CmdXMoveAbsolute: "<1B>*p" %d{DestX} "X"
+*Command: CmdYMoveAbsolute: "<1B>*p" %d{DestY} "Y"
+*Command: CmdXMoveRelRight: "<1B>*p+" %d{DestXRel} "X"
+*Command: CmdXMoveRelLeft:  "<1B>*p-" %d{DestXRel} "X"
+*Command: CmdYMoveRelDown:  "<1B>*p+" %d{DestYRel} "Y"
+*Command: CmdYMoveRelUp:    "<1B>*p-" %d{DestYRel} "Y"
+
+*% -------------------------------------------------------------- raster
+
+*% <Esc>*rB rather than <Esc>*rC: the C form also resets the compression
+*% method to 0 and the left graphics margin, which would silently desync
+*% Unidrv's idea of the current compression method between bands.
+*Command: CmdBeginRaster: "<1B>*r1A"
+*Command: CmdEndRaster: "<1B>*rB"
+*Command: CmdSendBlockData: "<1B>*b" %d{NumOfDataBytes} "W"
+
+*% Declaring both lets Unidrv compress every scan line both ways and keep
+*% the smaller result.  TIFF 4.0 is PCL method 2, DRC is PCL method 3.
+*Command: CmdEnableTIFF4: "<1B>*b2M"
+*Command: CmdEnableDRC: "<1B>*b3M"
+*Command: CmdDisableCompression: "<1B>*b0M"
+
+*% ------------------------------------------------------------ features
+
+*Feature: Orientation
+{
+    *rcNameID: =ORIENTATION_DISPLAY
+    *DefaultOption: PORTRAIT
+    *Option: PORTRAIT
+    {
+        *rcNameID: =PORTRAIT_DISPLAY
+    }
+    *Option: LANDSCAPE_CC270
+    {
+        *rcNameID: =LANDSCAPE_DISPLAY
+    }
+}
+
+*Feature: Resolution
+{
+    *rcNameID: =RESOLUTION_DISPLAY
+    *% The PJL resolution is what sizes the printer's page buffer; the PCL
+    *% raster resolution (<Esc>*t#R, in CmdStartPage) only says how to scale
+    *% the data into it.  Both are sent, as ml1250.exe does.
+    *DefaultOption: Option600
+    *Option: Option600
+    {
+        *Name: "600 x 600 dots per inch"
+        *DPI: PAIR(600, 600)
+        *TextDPI: PAIR(600, 600)
+        *SpotDiameter: 100
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.5
+            *Cmd: "@PJL SET RESOLUTION=600<0D0A>"
+        }
+    }
+    *Option: Option300
+    {
+        *% The safety valve.  At 300 dpi the printer expands each source
+        *% pixel to a 2x2 cell, so both the stream and the printer's own page
+        *% buffer shrink fourfold.  Use it if a page fails with a memory error.
+        *Name: "300 x 300 dots per inch"
+        *DPI: PAIR(300, 300)
+        *TextDPI: PAIR(300, 300)
+        *SpotDiameter: 100
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.5
+            *Cmd: "@PJL SET RESOLUTION=300<0D0A>"
+        }
+    }
+}
+
+*Feature: PaperSize
+{
+    *rcNameID: =PAPER_SIZE_DISPLAY
+    *DefaultOption: A4
+
+    *% PrintableArea is the PCL logical page width by the physical height
+    *% less the 1/6 inch unprintable band top and bottom.  CursorOrigin is
+    *% where PCL puts cursor (0,0): the logical page corner, which is inset
+    *% horizontally but flush with the top edge of the sheet.
+
+    *Option: A4
+    {
+        *rcNameID: =A4_DISPLAY
+        *PrintableArea: PAIR(4676, 6814)
+        *PrintableOrigin: PAIR(142, 100)
+        *CursorOrigin: PAIR(142, 0)
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.10
+            *Cmd: "<1B>&l26A"
+        }
+    }
+    *Option: LETTER
+    {
+        *rcNameID: =LETTER_DISPLAY
+        *PrintableArea: PAIR(4800, 6400)
+        *PrintableOrigin: PAIR(150, 100)
+        *CursorOrigin: PAIR(150, 0)
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.10
+            *Cmd: "<1B>&l2A"
+        }
+    }
+    *Option: LEGAL
+    {
+        *rcNameID: =LEGAL_DISPLAY
+        *PrintableArea: PAIR(4800, 8200)
+        *PrintableOrigin: PAIR(150, 100)
+        *CursorOrigin: PAIR(150, 0)
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.10
+            *Cmd: "<1B>&l3A"
+        }
+    }
+    *Option: EXECUTIVE
+    {
+        *rcNameID: =EXECUTIVE_DISPLAY
+        *PrintableArea: PAIR(4050, 6100)
+        *PrintableOrigin: PAIR(150, 100)
+        *CursorOrigin: PAIR(150, 0)
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.10
+            *Cmd: "<1B>&l1A"
+        }
+    }
+    *Option: A5
+    {
+        *rcNameID: =A5_DISPLAY
+        *PrintableArea: PAIR(3212, 4760)
+        *PrintableOrigin: PAIR(142, 100)
+        *CursorOrigin: PAIR(142, 0)
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.10
+            *Cmd: "<1B>&l25A"
+        }
+    }
+    *Option: B5
+    {
+        *rcNameID: =B5_DISPLAY
+        *PrintableArea: PAIR(4016, 5870)
+        *PrintableOrigin: PAIR(142, 100)
+        *CursorOrigin: PAIR(142, 0)
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.10
+            *Cmd: "<1B>&l45A"
+        }
+    }
+}
+
+*Feature: InputBin
+{
+    *rcNameID: =PAPER_SOURCE_DISPLAY
+    *DefaultOption: AUTO
+    *Option: AUTO
+    {
+        *rcNameID: =AUTO_DISPLAY
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.30
+            *Cmd: "<1B>&l7H"
+        }
+    }
+    *Option: UPPER
+    {
+        *rcNameID: =UPPER_TRAY_DISPLAY
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.30
+            *Cmd: "<1B>&l1H"
+        }
+    }
+    *Option: MANUAL
+    {
+        *rcNameID: =MANUAL_FEED_DISPLAY
+        *Command: CmdSelect
+        {
+            *Order: DOC_SETUP.30
+            *Cmd: "<1B>&l2H"
+        }
+    }
+}
+
+*Feature: Halftone
+{
+    *rcNameID: =HALFTONING_DISPLAY
+    *% A coarse clustered dither is the default on purpose.  It matters more
+    *% than image quality here: clustered patterns produce long runs of equal
+    *% bytes, which is what TIFF4 and delta-row compression need, and what the
+    *% printer's own page compression needs even more.  Supercell and
+    *% error-diffusion-like patterns produce high-entropy noise - HP documents
+    *% error diffusion by name as the case a PCL5 printer's internal
+    *% compression cannot handle - and on 4 MB that is the difference between
+    *% a printed page and a print overrun.
+    *DefaultOption: HT_PATSIZE_6x6_M
+    *Option: HT_PATSIZE_6x6_M
+    {
+        *rcNameID: =HT_DITHER6X6_DISPLAY
+    }
+    *Option: HT_PATSIZE_8x8_M
+    {
+        *rcNameID: =HT_DITHER8X8_DISPLAY
+    }
+    *Option: HT_PATSIZE_SUPERCELL_M
+    {
+        *rcNameID: =HT_SUPERCELL_DISPLAY
+    }
+    *Option: HT_PATSIZE_AUTO
+    {
+        *rcNameID: =HT_AUTO_SELECT_DISPLAY
+    }
+}
+
+*Feature: EconoMode
+{
+    *Name: "Toner Save"
+    *FeatureType: DOC_PROPERTY
+    *DefaultOption: OFF
+    *Option: OFF
+    {
+        *rcNameID: =OFF_DISPLAY
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.10
+            *Cmd: "@PJL SET ECONOMODE=OFF<0D0A>"
+        }
+    }
+    *Option: ON
+    {
+        *rcNameID: =ON_DISPLAY
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.10
+            *Cmd: "@PJL SET ECONOMODE=ON<0D0A>"
+        }
+    }
+}
+
+*% Samsung calls this SRT on the printer's own panel; over the wire it is
+*% plain PJL RET.  The token set comes from Samsung's Remote Control Panel
+*% binary: NORMAL, ENHANCE, GRAY, GRAY+.  "Printer default" sends nothing and
+*% leaves whatever is configured on the panel alone.
+*Feature: SRTMode
+{
+    *Name: "Resolution enhancement (SRT)"
+    *FeatureType: DOC_PROPERTY
+    *DefaultOption: PrinterDefault
+    *Option: PrinterDefault
+    {
+        *Name: "Printer default"
+    }
+    *Option: Normal
+    {
+        *Name: "Normal"
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.20
+            *Cmd: "@PJL SET RET=NORMAL<0D0A>"
+        }
+    }
+    *Option: TextEnhance
+    {
+        *Name: "Text enhance"
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.20
+            *Cmd: "@PJL SET RET=ENHANCE<0D0A>"
+        }
+    }
+    *Option: ImageEnhance
+    {
+        *Name: "Image enhance"
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.20
+            *Cmd: "@PJL SET RET=GRAY+<0D0A>"
+        }
+    }
+}
+
+*% Off by default and deliberately so.  Page protection asks the printer to
+*% reserve a whole page buffer, and a stock 4 MB ML-1250 has nowhere to put
+*% one - Samsung's own driver assumed at least 16 MB.  Turn it on only after
+*% fitting more memory, and only if pages are failing with a print overrun.
+*Feature: PageProtection
+{
+    *Name: "Page protection (needs extra printer memory)"
+    *FeatureType: PRINTER_PROPERTY
+    *DefaultOption: OFF
+    *Option: OFF
+    {
+        *rcNameID: =OFF_DISPLAY
+    }
+    *Option: AUTO
+    {
+        *Name: "Auto"
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.30
+            *Cmd: "@PJL SET PAGEPROTECT=AUTO<0D0A>"
+        }
+    }
+    *Option: ON
+    {
+        *rcNameID: =ON_DISPLAY
+        *Command: CmdSelect
+        {
+            *Order: JOB_SETUP.30
+            *Cmd: "@PJL SET PAGEPROTECT=ON<0D0A>"
+        }
+    }
+}

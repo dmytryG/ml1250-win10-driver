@@ -1,0 +1,20 @@
+# Build output (build.cmd / make put everything here)
+dist/
+
+# Compiled binaries anywhere, e.g. the research tools
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# Generated and self-signed by Install-ML1250.ps1 on each install; it is
+# tied to the machine that ran the installer and useless anywhere else.
+driver/*.cat
+
+# Captured print jobs
+*.prn
+
+__pycache__/
+
+.idea

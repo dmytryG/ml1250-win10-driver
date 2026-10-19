@@ -1,0 +1,106 @@
+;
+; ml1250.inf - Samsung ML-1250, PCL5e printer driver for Windows 10/11
+;
+; This is a v3 Unidrv minidriver and it ships no executable code at all: one
+; text file, ml1250.gpd, describing the printer to Microsoft's own in-box
+; unidrv.dll.  Nothing third-party is ever loaded into the print spooler, and
+; the same package works on x64 and Arm64 because there is nothing to compile.
+;
+; The structure follows Windows' own prnge001.inf - the in-box INF behind
+; "Generic / Text Only", which is itself a GPD-only Unidrv minidriver - so the
+; core driver is pulled in with CoreDriverSections rather than the older
+; Include=ntprint.inf / Needs= form.
+;
+; Two models are offered.  They are the same driver:
+;   "Samsung ML-1250 PCL5e"                 - plain, write-only.  The default.
+;   "Samsung ML-1250 PCL5e (with status)"   - adds Microsoft's PJL language
+;                                             monitor so the queue can read
+;                                             paper-out and toner status back.
+;                                             Needs a genuinely bidirectional
+;                                             port; a USB-to-parallel adapter
+;                                             or a one-way LPT port can stall
+;                                             the queue with it.
+;
+
+[Version]
+Signature   = "$Windows NT$"
+Provider    = %Provider%
+ClassGUID   = {4D36E979-E325-11CE-BFC1-08002BE10318}
+Class       = Printer
+CatalogFile = ml1250.cat
+DriverVer   = 10/19/2026,1.0.1.0
+PnpLockdown = 1
+
+[Manufacturer]
+%Mfg% = Samsung, NTamd64, NTarm64, NTx86
+
+; The hardware IDs are the real ones.  usbprint.sys builds a printer's
+; hardware ID as "%.20s%04X": the first 20 characters of MFG concatenated
+; with MDL, then a CRC-16/ARC of that same string.  For this printer that is
+; "SamsungML-1250" + CRC16/ARC("SamsungML-1250") = 4A2E, which is exactly the
+; ID Samsung's own ML125.INF used ("LPTENUM\SamsungML-12504A2E").  Their
+; SSUSB.INF maps USB\VID_04E8&PID_300E to the ML-1250.
+;
+; Auto-matching still may not fire on a device this old, because Windows ranks
+; class drivers on the Microsoft CID: key, which is a post-2012 extension to
+; the IEEE-1284 device ID.  Selecting the model by hand, or letting the
+; installer create the queue, always works.
+
+[Samsung.NTamd64]
+%ML1250%     = ML1250.Plain, SamsungML-12504A2E, USBPRINT\SamsungML-12504A2E, LPTENUM\SamsungML-12504A2E, USBPRINT\SamsungML-1250, Samsung_ML-1250
+%ML1250Bidi% = ML1250.Bidi
+
+[Samsung.NTarm64]
+%ML1250%     = ML1250.Plain, SamsungML-12504A2E, USBPRINT\SamsungML-12504A2E, LPTENUM\SamsungML-12504A2E, USBPRINT\SamsungML-1250, Samsung_ML-1250
+%ML1250Bidi% = ML1250.Bidi
+
+[Samsung.NTx86]
+%ML1250%     = ML1250.Plain, SamsungML-12504A2E, USBPRINT\SamsungML-12504A2E, LPTENUM\SamsungML-12504A2E, USBPRINT\SamsungML-1250, Samsung_ML-1250
+%ML1250Bidi% = ML1250.Bidi
+
+[ML1250.Plain]
+CopyFiles          = @ml1250.gpd
+DataFile           = ml1250.gpd
+CoreDriverSections = "{D20EA372-DD35-4950-9ED8-A6335AFE79F0},UNIDRV.OEM,UNIDRV_DATA,TTFSUB.OEM"
+
+[ML1250.Bidi]
+CopyFiles          = @ml1250.gpd
+DataFile           = ml1250.gpd
+CoreDriverSections = "{D20EA372-DD35-4950-9ED8-A6335AFE79F0},UNIDRV_BIDI.OEM,UNIDRV_BIDI_DATA,TTFSUB.OEM"
+
+[DestinationDirs]
+DefaultDestDir = 66000          ; the printer driver directory
+
+[SourceDisksFiles]
+ml1250.gpd = 1
+
+[SourceDisksNames.amd64]
+1 = %DiskName%
+
+[SourceDisksNames.arm64]
+1 = %DiskName%
+
+[SourceDisksNames.x86]
+1 = %DiskName%
+
+; {...79F0} is Microsoft's Unidrv core printer driver, as declared by the
+; in-box ntprint.inf.  Naming it here keeps our package correctly bound to it
+; across Windows servicing updates.
+[PrinterPackageInstallation.amd64]
+PackageAware = TRUE
+CoreDriverDependencies = {D20EA372-DD35-4950-9ED8-A6335AFE79F0}
+
+[PrinterPackageInstallation.arm64]
+PackageAware = TRUE
+CoreDriverDependencies = {D20EA372-DD35-4950-9ED8-A6335AFE79F0}
+
+[PrinterPackageInstallation.x86]
+PackageAware = TRUE
+CoreDriverDependencies = {D20EA372-DD35-4950-9ED8-A6335AFE79F0}
+
+[Strings]
+Provider   = "ml1250"
+Mfg        = "Samsung"
+ML1250     = "Samsung ML-1250 PCL5e"
+ML1250Bidi = "Samsung ML-1250 PCL5e (with status)"
+DiskName   = "Samsung ML-1250 PCL5e driver"
